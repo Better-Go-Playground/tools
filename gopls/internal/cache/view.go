@@ -11,7 +11,6 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -1064,36 +1063,6 @@ func FetchGoEnv(ctx context.Context, folder protocol.DocumentURI, opts *settings
 		env.ExplicitGOWORK = os.Getenv("GOWORK")
 	}
 	return env, nil
-}
-
-// loadGoEnv loads `go env` values into the provided map, keyed by Go variable
-// name.
-func loadGoEnv(ctx context.Context, dir string, configEnv []string, runner *gocommand.Runner, vars map[string]*string) error {
-	// We can save ~200 ms by requesting only the variables we care about.
-	args := []string{"-json"}
-	for k := range vars {
-		args = append(args, k)
-	}
-
-	inv := gocommand.Invocation{
-		Verb:       "env",
-		Args:       args,
-		Env:        configEnv,
-		WorkingDir: dir,
-	}
-	stdout, err := runner.Run(ctx, inv)
-	if err != nil {
-		return err
-	}
-	envMap := make(map[string]string)
-	if err := json.Unmarshal(stdout.Bytes(), &envMap); err != nil {
-		return fmt.Errorf("internal error unmarshaling JSON from 'go env': %w", err)
-	}
-	for key, ptr := range vars {
-		*ptr = envMap[key]
-	}
-
-	return nil
 }
 
 // findRootPattern looks for files with the given basename in dir or any parent
