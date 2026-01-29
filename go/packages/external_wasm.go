@@ -81,13 +81,13 @@ func newWasmDriverTransport(addr string) (*wasmDriverTransport, error) {
 	}, nil
 }
 
-func reqIDToIndex(id int) int {
+func reqIDToIndex(id int) (int, error) {
 	i := id - 1
 	if i < 0 {
-		panic("reqIDToIndex: negative value")
+		return 0, errors.New("reqIDToIndex: negative value")
 	}
 
-	return i
+	return i, nil
 }
 
 func indexToReqID(i int) int {
@@ -134,10 +134,21 @@ func (t *wasmDriverTransport) listen() {
 
 func (t *wasmDriverTransport) handleResponse(rsp jsonRPCResponse) (err error) {
 	if rsp.ID <= 0 {
-		return fmt.Errorf("invalid response id %d", rsp.ID)
+		// Notification or invalid JSON request errors don't have IDs.
+		if rsp.Error != nil {
+			logErr("wasmDriverTransport: received error from package driver: %s", rsp.Error)
+			return
+		}
+
+		logErr("wasmDriverTransport: received orphan response from package driver: %q", rsp.Result)
+		return
 	}
 
-	i := reqIDToIndex(rsp.ID)
+	i, err := reqIDToIndex(rsp.ID)
+	if err != nil {
+		return err
+	}
+
 	t.lock.Lock()
 	if i >= len(t.pendingResponses) {
 		t.lock.Unlock()
@@ -192,7 +203,11 @@ func (t *wasmDriverTransport) releaseReqID(id int) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
-	i := reqIDToIndex(id)
+	i, err := reqIDToIndex(id)
+	if err != nil {
+		logErr("wasmDriverTransport: cannot release invalid request id %d: %s", i, err)
+	}
+
 	if i >= len(t.pendingResponses) {
 		logErr("wasmDriverTransport: cannot release invalid request id %d", i)
 		return
