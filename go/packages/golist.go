@@ -861,8 +861,22 @@ func (state *golistState) cfgInvocation() gocommand.Invocation {
 	}
 }
 
-// invokeGo returns the stdout of a go command invocation.
 func (state *golistState) invokeGo(verb string, args ...string) (*bytes.Buffer, error) {
+	c, _ := newTraceCmd(state.ctx, verb, args)
+	defer c.send()
+
+	rsp, err := state.invokeGoImpl(verb, args...)
+	if err != nil {
+		c.Result.Error = err.Error()
+		return nil, err
+	}
+
+	c.setOutput(rsp)
+	return rsp, err
+}
+
+// invokeGo returns the stdout of a go command invocation.
+func (state *golistState) invokeGoImpl(verb string, args ...string) (*bytes.Buffer, error) {
 	cfg := state.cfg
 
 	inv := state.cfgInvocation()

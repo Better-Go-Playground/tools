@@ -336,7 +336,17 @@ func defaultDriver(cfg *Config, patterns ...string) (*DriverResponse, bool, erro
 
 	var runner gocommand.Runner // (shared across many 'go list' calls)
 	driver := func(cfg *Config, patterns []string) (*DriverResponse, error) {
-		return goListDriver(cfg, &runner, overlayFile, patterns)
+		c, ctx := newTraceDrv(cfg, overlayFile, patterns)
+		cfg.Context = ctx
+		defer c.send()
+
+		rsp, err := goListDriver(cfg, &runner, overlayFile, patterns)
+		c.Result.Ok = rsp
+		if err != nil {
+			c.Result.Error = err.Error()
+		}
+
+		return rsp, err
 	}
 	response, err := callDriverOnChunks(driver, cfg, chunks)
 	if err != nil {
@@ -781,7 +791,7 @@ func (ld *loader) refine(response *DriverResponse) ([]*Package, error) {
 	}
 	ld.pkgs = make(map[string]*loaderPackage)
 	// first pass, fixup and build the map and roots
-	var initial = make([]*loaderPackage, len(roots))
+	initial := make([]*loaderPackage, len(roots))
 	for _, pkg := range response.Packages {
 		rootIndex := -1
 		if i, found := rootMap[pkg.ID]; found {
