@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -263,6 +264,11 @@ func (t *ioDriverTransport) driverRequest(ctx context.Context, msg driverRequest
 	return rsp, err
 }
 
+const (
+	addrPfxSock = "unix:"
+	addrPfxFd   = "fd:"
+)
+
 // ioDriverTransportFromAddr parses packages driver IO transport from address string.
 //
 // Supported formats:
@@ -276,8 +282,22 @@ func ioDriverTransportFromAddr(val string) (*ioDriverTransport, error) {
 		return nil, errors.New("empty transport addr")
 	}
 
-	if strings.HasPrefix(val, "fd:") {
-		raw := val[3:]
+	if strings.HasPrefix(val, addrPfxSock) {
+		sockPath := strings.TrimSpace(val[len(addrPfxSock):])
+		if sockPath == "" {
+			return nil, fmt.Errorf("empty unix socket path in %q", val)
+		}
+
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			return nil, fmt.Errorf("cannot connect to unix socket %q: %w", sockPath, err)
+		}
+
+		return newIODriverTransport(conn, conn), nil
+	}
+
+	if strings.HasPrefix(val, addrPfxFd) {
+		raw := val[len(addrPfxFd):]
 		parts := strings.SplitN(raw, ",", 3)
 		if len(parts) != 2 {
 			return nil, fmt.Errorf("invalid fd transport addr %q", val)
