@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/url"
 	"os"
@@ -88,7 +89,7 @@ func logErr(format string, args ...any) {
 		msg = fmt.Sprintf(format, args...)
 	}
 
-	fmt.Fprintln(os.Stderr, msg)
+	fmt.Fprintln(logFile, msg)
 }
 
 func (t *ioDriverTransport) listen() {
@@ -96,7 +97,7 @@ func (t *ioDriverTransport) listen() {
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			logErr("wasmDriverTransport: failed to read response: %s", err)
+			logErr("ioDriverTransport: failed to read response: %s", err)
 			if len(line) == 0 {
 				return
 			}
@@ -110,9 +111,10 @@ func (t *ioDriverTransport) listen() {
 			continue
 		}
 
+		log.Printf("ioDriverTransport: try parse %q", line)
 		var rsp rpcResponse
 		if unmarshalErr := json.Unmarshal(line, &rsp); unmarshalErr != nil {
-			logErr("wasmDriverTransport: failed to unmarshal response: %s", unmarshalErr)
+			logErr("ioDriverTransport: failed to unmarshal response: %s", unmarshalErr)
 			if errors.Is(err, io.EOF) {
 				return
 			}
@@ -120,7 +122,7 @@ func (t *ioDriverTransport) listen() {
 		}
 
 		if handleErr := t.handleResponse(rsp); handleErr != nil {
-			logErr("wasmDriverTransport: %s", handleErr)
+			logErr("ioDriverTransport: %s", handleErr)
 		}
 
 		if errors.Is(err, io.EOF) {
@@ -133,11 +135,11 @@ func (t *ioDriverTransport) handleResponse(rsp rpcResponse) (err error) {
 	if rsp.ID <= 0 {
 		// Notification or invalid JSON request errors don't have IDs.
 		if rsp.Error != nil {
-			logErr("wasmDriverTransport: received error from package driver: %s", rsp.Error)
+			logErr("ioDriverTransport: received error from package driver: %s", rsp.Error)
 			return
 		}
 
-		logErr("wasmDriverTransport: received orphan response from package driver: %q", rsp.Result)
+		logErr("ioDriverTransport: received orphan response from package driver: %q", rsp.Result)
 		return
 	}
 
@@ -173,7 +175,7 @@ func (t *ioDriverTransport) cancelRequest(id int) {
 		Params: id,
 	})
 	if err != nil {
-		logErr("wasmDriverTransport: can't cancel request %q: %s", id, err)
+		logErr("ioDriverTransport: can't cancel request %q: %s", id, err)
 	}
 }
 
@@ -202,11 +204,11 @@ func (t *ioDriverTransport) releaseReqID(id int) {
 
 	i, err := reqIDToIndex(id)
 	if err != nil {
-		logErr("wasmDriverTransport: cannot release invalid request id %d: %s", i, err)
+		logErr("ioDriverTransport: cannot release invalid request id %d: %s", i, err)
 	}
 
 	if i >= len(t.pendingResponses) {
-		logErr("wasmDriverTransport: cannot release invalid request id %d", i)
+		logErr("ioDriverTransport: cannot release invalid request id %d", i)
 		return
 	}
 
@@ -220,10 +222,12 @@ func (t *ioDriverTransport) doRequest(ctx context.Context, req rpcRequest, out a
 
 	err := json.NewEncoder(t.writer).Encode(req)
 	if err != nil {
+		log.Printf("driverRequest.send.err: %d", reqID)
 		t.releaseReqID(reqID)
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	log.Printf("driverRequest.send.ok: %d", reqID)
 	defer t.releaseReqID(reqID)
 	select {
 	case <-ctx.Done():
@@ -231,17 +235,20 @@ func (t *ioDriverTransport) doRequest(ctx context.Context, req rpcRequest, out a
 		return ctx.Err()
 	case rsp, ok := <-ch:
 		if !ok {
-			return fmt.Errorf("wasmDriverTransport: response channel closed (reqID: %d)", reqID)
+			return fmt.Errorf("ioDriverTransport: response channel closed (reqID: %d)", reqID)
 		}
 
 		if rsp.Error != nil {
+			log.Printf("driverRequest.result.err: %s (id=%d)", rsp.Error.Message, reqID)
 			return rsp.Error
 		}
 
 		if err := json.Unmarshal(rsp.Result, out); err != nil {
+			log.Printf("driverRequest.result.err: NOT A JSON: %s (id=%d)", err, reqID)
 			return fmt.Errorf("failed to unmarshal response body: %w", err)
 		}
 
+		log.Printf("driverRequest.result.ok: %#v (id=%d)", out, reqID)
 		return nil
 	}
 }

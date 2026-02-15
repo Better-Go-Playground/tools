@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +16,7 @@ import (
 
 var (
 	traceFile *os.File
+	logFile   = os.Stderr
 	nextSpan  atomic.Uint64
 )
 
@@ -48,10 +50,10 @@ func getStackTrace(skip int) []stackFrame {
 	return out
 }
 
-func TraceBegin() {
-	e, ok := os.LookupEnv("LSP_PKG_TRACE")
+func openFileFromEnv(envName string, dst **os.File) error {
+	e, ok := os.LookupEnv(envName)
 	if !ok || e == "" {
-		return
+		return nil
 	}
 
 	fp, err := filepath.Abs(e)
@@ -62,19 +64,36 @@ func TraceBegin() {
 
 	f, err := os.OpenFile(fp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		logErr("TraceBegin: can't open trace file %q: %s", fp, err)
+		return err
 	}
 
-	traceFile = f
+	*dst = f
+	return nil
 }
 
-func TraceEnd() {
-	if traceFile == nil {
+func TraceBegin() {
+	if err := openFileFromEnv("LSP_PKG_TRACE", &traceFile); err != nil {
+		logErr("TraceBegin: can't open trace file")
+	}
+
+	if err := openFileFromEnv("LSP_LOG_FILE", &logFile); err != nil {
+		logErr("TraceBegin: can't open log file")
 		return
 	}
 
-	traceFile.Close()
-	traceFile.Sync()
+	log.SetOutput(logFile)
+}
+
+func TraceEnd() {
+	if traceFile != nil {
+		traceFile.Close()
+		traceFile.Sync()
+	}
+
+	if logFile != nil {
+		logFile.Close()
+		logFile.Sync()
+	}
 }
 
 type result[T any] struct {
