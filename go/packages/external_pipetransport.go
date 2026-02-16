@@ -39,6 +39,12 @@ func buildDriver(tool string) driver {
 				Overlay:    cfg.Overlay,
 			},
 		}
-		return transport.driverRequest(cfg.Context, msg)
+
+		t := newRPCTraceCall(cfg, patterns)
+		defer t.send()
+
+		rsp, err := transport.driverRequest(cfg.Context, msg)
+		t.setResult(rsp, err)
+		return rsp, err
 	}
 }

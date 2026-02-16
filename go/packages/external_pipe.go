@@ -244,11 +244,10 @@ func (t *ioDriverTransport) doRequest(ctx context.Context, req rpcRequest, out a
 		}
 
 		if err := json.Unmarshal(rsp.Result, out); err != nil {
-			log.Printf("driverRequest.result.err: NOT A JSON: %s (id=%d)", err, reqID)
 			return fmt.Errorf("failed to unmarshal response body: %w", err)
 		}
 
-		log.Printf("driverRequest.result.ok: %#v (id=%d)", out, reqID)
+		log.Printf("driverRequest.result.ok: size=%d id=%d", len(rsp.Result), reqID)
 		return nil
 	}
 }
@@ -259,11 +258,13 @@ type driverRequestEnvelope struct {
 	DriverRequest DriverRequest `json:"driverRequest"`
 }
 
+const methodNameDriverQuery = "goPackageDriver/query"
+
 func (t *ioDriverTransport) driverRequest(ctx context.Context, msg driverRequestEnvelope) (*DriverResponse, error) {
 	// Request ID is populated by doRequest.
 	rsp := new(DriverResponse)
 	req := rpcRequest{
-		Method: "goPackageDriver/query",
+		Method: methodNameDriverQuery,
 		Params: msg,
 	}
 

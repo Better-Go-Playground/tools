@@ -340,11 +340,12 @@ func defaultDriver(cfg *Config, patterns ...string) (*DriverResponse, bool, erro
 		cfg.Context = ctx
 		defer c.send()
 
+		t := newRPCTraceCall(cfg, patterns)
+		defer t.send()
+
 		rsp, err := goListDriver(cfg, &runner, overlayFile, patterns)
-		c.Result.Ok = rsp
-		if err != nil {
-			c.Result.Error = err.Error()
-		}
+		c.setResult(rsp, err)
+		t.setResult(rsp, err)
 
 		return rsp, err
 	}

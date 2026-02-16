@@ -9,15 +9,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 	"unsafe"
 )
 
 var (
-	traceFile *os.File
-	logFile   = os.Stderr
-	nextSpan  atomic.Uint64
+	traceFile    *os.File
+	rpcTraceFile *os.File
+	logFile      = os.Stderr
+	nextSpan     atomic.Uint64
 )
 
 const skipFrameCount = 2
@@ -74,6 +76,10 @@ func openFileFromEnv(envName string, dst **os.File) error {
 func TraceBegin() {
 	if err := openFileFromEnv("LSP_PKG_TRACE", &traceFile); err != nil {
 		logErr("TraceBegin: can't open trace file")
+	}
+
+	if err := openFileFromEnv("LSP_IPC_TRACE", &rpcTraceFile); err != nil {
+		logErr("TraceBegin: can't open RPC trace file")
 	}
 
 	if err := openFileFromEnv("LSP_LOG_FILE", &logFile); err != nil {
@@ -152,6 +158,73 @@ type overlay struct {
 	}
 }
 
+type ipcResponse struct {
+	ID     int             `json:"id"`
+	Result *DriverResponse `json:"result"`
+	Error  *rpcError       `json:"error"`
+}
+
+type rpcCallTrace struct {
+	Request  rpcRequest   `json:"request"`
+	Response *ipcResponse `json:"response"`
+}
+
+var reqID atomic.Int64
+
+// newRPCTraceCall captures calls done by default internal driver in a format of the pipe driver.
+// Done to compare external and builtin driver responses.
+func newRPCTraceCall(cfg *Config, patterns []string) *rpcCallTrace {
+	if rpcTraceFile == nil {
+		return nil
+	}
+
+	reqID := reqID.Add(1)
+	return &rpcCallTrace{
+		Request: rpcRequest{
+			ID:     int(reqID),
+			Method: methodNameDriverQuery,
+			Params: driverRequestEnvelope{
+				WorkDir:  cfg.Dir,
+				Patterns: patterns,
+				DriverRequest: DriverRequest{
+					Mode:       cfg.Mode,
+					Env:        truncateEnv(cfg.Env),
+					BuildFlags: cfg.BuildFlags,
+					Tests:      cfg.Tests,
+					Overlay:    cfg.Overlay,
+				},
+			},
+		},
+	}
+}
+
+func (t *rpcCallTrace) setResult(rsp *DriverResponse, err error) {
+	if t == nil {
+		return
+	}
+
+	t.Response = &ipcResponse{
+		ID:     t.Request.ID,
+		Result: rsp,
+	}
+
+	if err != nil {
+		t.Response.Error = &rpcError{
+			Code:    -32603,
+			Message: err.Error(),
+		}
+	}
+}
+
+func (t *rpcCallTrace) send() {
+	if t == nil || rpcTraceFile == nil {
+		return
+	}
+
+	json.NewEncoder(rpcTraceFile).Encode(t)
+}
+
+// traceDrv is a trace to capture internal go pkg driver calls.
 type traceDrv struct {
 	header   traceHeader
 	Overlay  *overlay                `json:"overlay,omitempty"`
@@ -159,6 +232,13 @@ type traceDrv struct {
 	Patterns []string                `json:"patterns"`
 	Req      DriverRequest           `json:"req"`
 	Result   result[*DriverResponse] `json:"result"`
+}
+
+func (t *traceDrv) setResult(rsp *DriverResponse, err error) {
+	t.Result.Ok = rsp
+	if err != nil {
+		t.Result.Error = err.Error()
+	}
 }
 
 func tryReadOverlay(ovFile string) *overlay {
@@ -289,4 +369,76 @@ func traceSend(msg traceMsg) {
 	if err != nil {
 		logErr("traceSend: %s", err)
 	}
+}
+
+var (
+	void         = struct{}{}
+	envWhitelist = map[string]struct{}{
+		"GOPACKAGESDRIVER":     void,
+		"GOPACKAGESDRIVERADDR": void,
+		"GOPLS_BIN":            void,
+		"PWD":                  void,
+		"GOEXPERIMENT":         void,
+		"GO111MODULE":          void,
+		"GOHOSTARCH":           void,
+		"GODEBUG":              void,
+		"GOOS":                 void,
+		"GOPATH":               void,
+		"CGO_CXXFLAGS":         void,
+		"GOAUTH":               void,
+		"GOBIN":                void,
+		"GOENV":                void,
+		"GOAMD64":              void,
+		"GOVCS":                void,
+		"GOTELEMETRY":          void,
+		"CGO_LDFLAGS":          void,
+		"GOFLAGS":              void,
+		"GOVERSION":            void,
+		"GOPRIVATE":            void,
+		"GOTOOLCHAIN":          void,
+		"AR":                   void,
+		"GOPROXY":              void,
+		"CXX":                  void,
+		"GOTMPDIR":             void,
+		"GOEXE":                void,
+		"GONOPROXY":            void,
+		"GOCACHEPROG":          void,
+		"GOMODCACHE":           void,
+		"CGO_CPPFLAGS":         void,
+		"GOARCH":               void,
+		"GCCGO":                void,
+		"GOINSECURE":           void,
+		"CC":                   void,
+		"CGO_FFLAGS":           void,
+		"PKG_CONFIG":           void,
+		"GOTELEMETRYDIR":       void,
+		"GOTOOLDIR":            void,
+		"GOFIPS140":            void,
+		"CGO_CFLAGS":           void,
+		"GONOSUMDB":            void,
+		"GOCACHE":              void,
+		"GOMOD":                void,
+		"GOHOSTOS":             void,
+		"GOGCCFLAGS":           void,
+		"GOSUMDB":              void,
+		"GOROOT":               void,
+		"GOWORK":               void,
+		"CGO_ENABLED":          void,
+	}
+)
+
+func truncateEnv(src []string) []string {
+	out := make([]string, 0, len(src))
+	for _, v := range src {
+		name, _, ok := strings.Cut(v, "=")
+		if !ok {
+			continue
+		}
+
+		if _, ok := envWhitelist[name]; ok {
+			out = append(out, v)
+		}
+	}
+
+	return out
 }
