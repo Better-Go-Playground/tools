@@ -78,7 +78,7 @@ func TraceBegin() {
 		logErr("TraceBegin: can't open trace file")
 	}
 
-	if err := openFileFromEnv("LSP_IPC_TRACE", &rpcTraceFile); err != nil {
+	if err := openFileFromEnv("LSP_RPC_TRACE", &rpcTraceFile); err != nil {
 		logErr("TraceBegin: can't open RPC trace file")
 	}
 
@@ -88,6 +88,7 @@ func TraceBegin() {
 	}
 
 	log.SetOutput(logFile)
+	log.Println("TraceBegin")
 }
 
 func TraceEnd() {
